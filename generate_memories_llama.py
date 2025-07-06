@@ -1,12 +1,19 @@
 import json
 import random
 import time
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import argparse
 from datetime import datetime
 
-API_URL = "http://localhost:8080/v1/chat/completions"
+API_URLS = [
+    "http://localhost:8080/v1/chat/completions",
+    "http://localhost:8081/v1/chat/completions",
+    "http://localhost:8082/v1/chat/completions",
+    "http://localhost:8083/v1/chat/completions"
+]
+
 HEADERS = {"Content-Type": "application/json"}
 MAX_RETRIES = 3
 
@@ -32,19 +39,21 @@ def generate_entry(prompt_template):
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = requests.post(API_URL, json=payload, headers=HEADERS, timeout=60)
+            url = random.choice(API_URLS)  # Randomly distribute load
+            response = requests.post(url, json=payload, headers=HEADERS, timeout=60)
+
             if response.status_code == 200:
                 content = response.json()["choices"][0]["message"]["content"].strip()
                 try:
-                    json.loads(content)  # Validate JSON format
+                    json.loads(content)  # Validate JSON
                     return content
                 except json.JSONDecodeError:
-                    print(f"⚠️ Invalid JSON (attempt {attempt}): {content[:100]}...")
+                    print(f"⚠️ Invalid JSON (attempt {attempt}): {content[:100]}...", flush=True)
             else:
-                print(f"❌ HTTP {response.status_code}: {response.text[:100]}")
+                print(f"❌ HTTP {response.status_code} from {url}: {response.text[:100]}", flush=True)
         except Exception as e:
-            print(f"⚠️ Exception on attempt {attempt}: {e}")
-        time.sleep(1 + random.uniform(0, 1))
+            print(f"⚠️ Exception on attempt {attempt} to {url}: {e}", flush=True)
+        time.sleep(0.5 + random.uniform(0, 0.5))  # Shorter backoff on powerful GPUs
     return None
 
 def main():
@@ -68,7 +77,7 @@ def main():
         args.output = f"memories_{timestamp}.jsonl"
 
     total = args.count
-    print(f"\n🔁 Generating {total} entries using {args.threads} threads...")
+    print(f"\n🔁 Generating {total} entries using {args.threads} threads across 4 GPUs...")
     print(f"💾 Output: {args.output}\n")
 
     with open(args.output, "w", encoding="utf-8") as f_out:
@@ -79,11 +88,12 @@ def main():
                 result = future.result()
                 if result:
                     f_out.write(result + "\n")
-                    print(f"[{i}/{total}] ✅")
+                    print(f"[{i}/{total}] ✅", flush=True)
                 else:
-                    print(f"[{i}/{total}] ❌ Failed after retries")
+                    print(f"[{i}/{total}] ❌ Failed after retries", flush=True)
 
     print(f"\n✅ Done. Saved results to: {args.output}")
 
 if __name__ == "__main__":
     main()
+
